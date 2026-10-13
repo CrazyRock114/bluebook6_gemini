@@ -13,10 +13,7 @@ import {
   Mic,
   Clock,
   Sparkles,
-  Sliders,
   X,
-  FastForward,
-  Rewind,
   BookOpen
 } from "lucide-react";
 import { VideoLecture } from "@/data/videoCatalogData";
@@ -46,7 +43,9 @@ export default function InteractiveTranscriptVault({
   const [copiedType, setCopiedType] = useState<string | null>(null);
   const [activeNotice, setActiveNotice] = useState<string | null>(null);
 
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeItemRef = useRef<HTMLDivElement | null>(null);
 
   // Parse structured components from fullTranscript
@@ -71,19 +70,18 @@ export default function InteractiveTranscriptVault({
       }
     }
 
-    // Extract Blackboard OCR section
-    const boardMatch = raw.match(/【(?:黑板板书题设与推导实录|开场板书与题设\/定理实录)】([\s\S]*?)(?=【|$)/);
+    // Extract Blackboard OCR section (aligned with actual headings in dataset)
+    const boardMatch = raw.match(
+      /【(?:黑板板书题设与推导实录|黑板板书实录|开场板书与题设\/定理实录)】([\s\S]*?)(?=【|$)/
+    );
     if (boardMatch) {
       board = boardMatch[1].trim();
-      // If there is middle board OCR as well
-      const midMatch = raw.match(/【中场黑板演算与推导全景】([\s\S]*?)(?=【|$)/);
-      if (midMatch) {
-        board += "\n\n【中场深入推演】\n" + midMatch[1].trim();
-      }
     }
 
     // Extract Verbatim speech section
-    const verbatimMatch = raw.match(/【真人原声口播全文转录(?:（基于 Whisper 硬件加速识别）)?】([\s\S]*?)(?=【|$)/);
+    const verbatimMatch = raw.match(
+      /【真人原声口播全文转录(?:（基于 Whisper 硬件加速识别）)?】([\s\S]*?)(?=【|$)/
+    );
     if (verbatimMatch) {
       verbatim = verbatimMatch[1].trim();
     }
@@ -96,10 +94,10 @@ export default function InteractiveTranscriptVault({
     };
   }, [video.fullTranscript]);
 
-  // Find active slice based on currentTime
+  // Find active slice based on currentTime (starts at -1 until playback reaches a slice)
   const currentSliceIdx = useMemo(() => {
     if (!slices.length) return -1;
-    let found = 0;
+    let found = -1;
     for (let i = 0; i < slices.length; i++) {
       if (slices[i].seconds <= currentTime) {
         found = i;
@@ -110,6 +108,16 @@ export default function InteractiveTranscriptVault({
     return found;
   }, [slices, currentTime]);
 
+  // Scroll active slice into view
+  useEffect(() => {
+    if (activeItemRef.current) {
+      activeItemRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest"
+      });
+    }
+  }, [currentSliceIdx]);
+
   // Filtered slices based on internal search
   const filteredSlices = useMemo(() => {
     if (!searchWord.trim()) return slices;
@@ -117,18 +125,18 @@ export default function InteractiveTranscriptVault({
     return slices.filter((s) => s.text.toLowerCase().includes(q) || s.timeStr.includes(q));
   }, [slices, searchWord]);
 
-  // Playback timer simulation
+  // Handle end of playback cleanly outside updater
+  useEffect(() => {
+    if (currentTime >= video.durationSec && isPlaying) {
+      setIsPlaying(false);
+    }
+  }, [currentTime, video.durationSec, isPlaying]);
+
+  // Playback timer simulation (rate controlled purely by interval, increment by 1s)
   useEffect(() => {
     if (isPlaying) {
       timerRef.current = setInterval(() => {
-        setCurrentTime((prev) => {
-          const next = prev + 1 * playbackSpeed;
-          if (next >= video.durationSec) {
-            setIsPlaying(false);
-            return video.durationSec;
-          }
-          return next;
-        });
+        setCurrentTime((prev) => Math.min(prev + 1, video.durationSec));
       }, 1000 / playbackSpeed);
     } else {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -139,20 +147,38 @@ export default function InteractiveTranscriptVault({
     };
   }, [isPlaying, playbackSpeed, video.durationSec]);
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    };
+  }, []);
+
   // Handle click on a single slice to jump
   const handleJumpToSlice = (slice: TranscriptSlice) => {
     setCurrentTime(slice.seconds);
     setActiveNotice(`已跳转至 ${slice.timeStr} ：“${slice.text.slice(0, 24)}...”`);
     if (onJumpToTime) onJumpToTime(slice.seconds);
-    setTimeout(() => {
+
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = setTimeout(() => {
       setActiveNotice(null);
     }, 3000);
   };
 
-  const handleCopy = (text: string, typeName: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedType(typeName);
-    setTimeout(() => setCopiedType(null), 2000);
+  const handleCopy = async (text: string, typeName: string) => {
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        setCopiedType(typeName);
+        if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+        copiedTimerRef.current = setTimeout(() => setCopiedType(null), 2000);
+      }
+    } catch (err) {
+      console.warn("Failed to copy text:", err);
+    }
   };
 
   const formatSeconds = (sec: number) => {
@@ -160,6 +186,38 @@ export default function InteractiveTranscriptVault({
     const s = Math.floor(sec % 60);
     return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
   };
+
+  function CopyButton({
+    text,
+    typeName,
+    label,
+    copiedLabel
+  }: {
+    text: string;
+    typeName: string;
+    label: string;
+    copiedLabel: string;
+  }) {
+    const isCopied = copiedType === typeName;
+    return (
+      <button
+        onClick={() => handleCopy(text, typeName)}
+        className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-950 border border-slate-800 hover:bg-slate-800 text-slate-300 text-xs transition-colors"
+      >
+        {isCopied ? (
+          <>
+            <Check className="w-3 h-3 text-emerald-400" />
+            <span className="text-emerald-400">{copiedLabel}</span>
+          </>
+        ) : (
+          <>
+            <Copy className="w-3 h-3 text-slate-400" />
+            <span>{label}</span>
+          </>
+        )}
+      </button>
+    );
+  }
 
   return (
     <div className={`bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden space-y-4 p-4 sm:p-5 ${className}`}>
@@ -362,27 +420,12 @@ export default function InteractiveTranscriptVault({
               <span className="text-[11px] text-slate-500 font-mono">
                 匹配 {filteredSlices.length} / {slices.length} 句
               </span>
-              <button
-                onClick={() =>
-                  handleCopy(
-                    slices.map((s) => `[${s.timeStr}] ${s.text}`).join("\n"),
-                    "timeline"
-                  )
-                }
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-950 border border-slate-800 hover:bg-slate-800 text-slate-300 text-xs transition-colors"
-              >
-                {copiedType === "timeline" ? (
-                  <>
-                    <Check className="w-3 h-3 text-emerald-400" />
-                    <span className="text-emerald-400">已复制带时间轴逐字稿</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3 h-3 text-slate-400" />
-                    <span>复制带时间轴全文</span>
-                  </>
-                )}
-              </button>
+              <CopyButton
+                text={slices.map((s) => `[${s.timeStr}] ${s.text}`).join("\n")}
+                typeName="timeline"
+                label="复制带时间轴全文"
+                copiedLabel="已复制带时间轴逐字稿"
+              />
             </div>
           </div>
 
@@ -394,14 +437,12 @@ export default function InteractiveTranscriptVault({
               </div>
             ) : (
               filteredSlices.map((slice, idx) => {
-                const isActive =
-                  currentSliceIdx >= 0 &&
-                  slices[currentSliceIdx] &&
-                  slices[currentSliceIdx].timeStr === slice.timeStr;
+                const isActive = currentSliceIdx === idx;
 
                 return (
                   <div
                     key={`${slice.timeStr}-${idx}`}
+                    ref={isActive ? activeItemRef : null}
                     onClick={() => handleJumpToSlice(slice)}
                     className={`p-2.5 rounded-xl border text-xs cursor-pointer transition-all flex items-start gap-3 ${
                       isActive
@@ -451,22 +492,12 @@ export default function InteractiveTranscriptVault({
             <span className="text-xs text-slate-400">
               真实视频黑板板书（开场与中场高精 Vision OCR 还原）：
             </span>
-            <button
-              onClick={() => handleCopy(boardNotes, "board")}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-950 border border-slate-800 hover:bg-slate-800 text-slate-300 text-xs transition-colors"
-            >
-              {copiedType === "board" ? (
-                <>
-                  <Check className="w-3 h-3 text-emerald-400" />
-                  <span className="text-emerald-400">已复制板书</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3 h-3 text-slate-400" />
-                  <span>复制黑板板书</span>
-                </>
-              )}
-            </button>
+            <CopyButton
+              text={boardNotes}
+              typeName="board"
+              label="复制黑板板书"
+              copiedLabel="已复制板书"
+            />
           </div>
 
           <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-emerald-300 leading-relaxed whitespace-pre-wrap select-text max-h-80 overflow-y-auto">
@@ -482,22 +513,12 @@ export default function InteractiveTranscriptVault({
             <span className="text-xs text-slate-400">
               名师连续原声口播实录（自然段落排版）：
             </span>
-            <button
-              onClick={() => handleCopy(verbatimSpeech, "verbatim")}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-950 border border-slate-800 hover:bg-slate-800 text-slate-300 text-xs transition-colors"
-            >
-              {copiedType === "verbatim" ? (
-                <>
-                  <Check className="w-3 h-3 text-emerald-400" />
-                  <span className="text-emerald-400">已复制口播全文</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3 h-3 text-slate-400" />
-                  <span>复制口播全文</span>
-                </>
-              )}
-            </button>
+            <CopyButton
+              text={verbatimSpeech}
+              typeName="verbatim"
+              label="复制口播全文"
+              copiedLabel="已复制口播全文"
+            />
           </div>
 
           <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-300 leading-relaxed whitespace-pre-wrap select-text max-h-80 overflow-y-auto">
@@ -511,22 +532,12 @@ export default function InteractiveTranscriptVault({
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-xs text-slate-400">全量原始转录文本：</span>
-            <button
-              onClick={() => handleCopy(rawTranscript, "raw")}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-950 border border-slate-800 hover:bg-slate-800 text-slate-300 text-xs transition-colors"
-            >
-              {copiedType === "raw" ? (
-                <>
-                  <Check className="w-3 h-3 text-emerald-400" />
-                  <span className="text-emerald-400">已复制完整档案</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3 h-3 text-slate-400" />
-                  <span>复制完整档案</span>
-                </>
-              )}
-            </button>
+            <CopyButton
+              text={rawTranscript}
+              typeName="raw"
+              label="复制完整档案"
+              copiedLabel="已复制完整档案"
+            />
           </div>
 
           <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-slate-400 leading-relaxed whitespace-pre-wrap select-text max-h-80 overflow-y-auto">

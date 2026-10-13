@@ -1,35 +1,23 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import confetti from "canvas-confetti";
 import {
   CheckCircle2,
   XCircle,
   HelpCircle,
   Lightbulb,
-  Play,
   Check,
   Search,
-  Filter,
-  Video,
   Sparkles,
-  Layers,
   Award,
   AlertTriangle,
   Star,
-  Bookmark,
-  CheckCheck,
-  Eye,
-  EyeOff,
   ChevronDown,
-  ChevronUp,
-  Copy,
-  ExternalLink,
-  BookOpen
+  Copy
 } from "lucide-react";
 import MathView from "@/components/MathView";
 import { ALL_VOLUME_6_EXERCISES } from "@/data/allExercisesData";
-import { ExerciseItem } from "@/data/chapter1Data";
 
 interface UniversalExerciseStudioProps {
   initialChapter?: number | "all";
@@ -38,6 +26,20 @@ interface UniversalExerciseStudioProps {
 const STORAGE_COMPLETED_KEY = "bluebook6_completed_exercises_v1";
 const STORAGE_BOOKMARKS_KEY = "bluebook6_bookmarks_exercises_v1";
 const STORAGE_ANSWERS_KEY = "bluebook6_answers_exercises_v1";
+
+const TOTAL_EXERCISES_COUNT = ALL_VOLUME_6_EXERCISES.length;
+
+const DIFF_BADGE: Record<string, string> = {
+  "全国压轴": "bg-rose-500/10 text-rose-400 border-rose-500/20",
+  "联赛进阶": "bg-amber-500/10 text-amber-400 border-amber-500/20",
+  "基础巩固": "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+};
+
+function getChapterPageRange(chapter?: number): string {
+  if (chapter === 2) return "华东师大版 P51~P55 (全解 P97~P114)";
+  if (chapter === 3) return "华东师大版 P70~P74 (全解 P114~P131)";
+  return "华东师大版 P27~P33 (全解 P79~P96)";
+}
 
 interface SolutionStep {
   stepNum: number;
@@ -69,6 +71,8 @@ function splitSolutionIntoSteps(text: string): SolutionStep[] {
   return [{ stepNum: 1, title: "完整官方规范推导", content: normalized }];
 }
 
+type FilterStatus = "all" | "completed" | "unsolved" | "bookmarked";
+
 export default function UniversalExerciseStudio({
   initialChapter = "all"
 }: UniversalExerciseStudioProps) {
@@ -76,7 +80,7 @@ export default function UniversalExerciseStudio({
   const [activeTab, setActiveTab] = useState<"sandbox" | "hint" | "checkpoint" | "solution">("sandbox");
   const [filterChapter, setFilterChapter] = useState<number | "all">(initialChapter);
   const [filterDiff, setFilterDiff] = useState<string>("all");
-  const [filterStatus, setFilterStatus] = useState<"all" | "completed" | "unsolved" | "bookmarked">("all");
+  const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
   // Persistent user state
@@ -93,6 +97,8 @@ export default function UniversalExerciseStudio({
   const [highlightKeyEquations, setHighlightKeyEquations] = useState<boolean>(true);
   const [revealedStepCount, setRevealedStepCount] = useState<number>(1);
   const [copiedSolution, setCopiedSolution] = useState<boolean>(false);
+
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Load from localStorage on mount
   useEffect(() => {
@@ -124,6 +130,10 @@ export default function UniversalExerciseStudio({
     } catch (e) {
       console.warn("Failed to read progress from localStorage:", e);
     }
+
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
   }, []);
 
   // Filter exercises
@@ -162,40 +172,36 @@ export default function UniversalExerciseStudio({
     setRevealedStepCount(1);
   }, [selectedExId]);
 
-  // Toggle Completed
+  // Toggle Completed (pure state update, side effect outside)
   const toggleCompleted = (id: string) => {
-    setCompletedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      try {
-        localStorage.setItem(STORAGE_COMPLETED_KEY, JSON.stringify(Array.from(next)));
-      } catch (err) {
-        console.warn(err);
-      }
-      return next;
-    });
+    const next = new Set(completedIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    setCompletedIds(next);
+    try {
+      localStorage.setItem(STORAGE_COMPLETED_KEY, JSON.stringify(Array.from(next)));
+    } catch (err) {
+      console.warn("Failed to save completed exercises to localStorage:", err);
+    }
   };
 
-  // Toggle Bookmark
+  // Toggle Bookmark (pure state update, side effect outside)
   const toggleBookmark = (id: string) => {
-    setBookmarkedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      try {
-        localStorage.setItem(STORAGE_BOOKMARKS_KEY, JSON.stringify(Array.from(next)));
-      } catch (err) {
-        console.warn(err);
-      }
-      return next;
-    });
+    const next = new Set(bookmarkedIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    setBookmarkedIds(next);
+    try {
+      localStorage.setItem(STORAGE_BOOKMARKS_KEY, JSON.stringify(Array.from(next)));
+    } catch (err) {
+      console.warn("Failed to save bookmarks to localStorage:", err);
+    }
   };
 
   const handleAnswerSubmit = (optionIdx: number) => {
@@ -208,7 +214,7 @@ export default function UniversalExerciseStudio({
     try {
       localStorage.setItem(STORAGE_ANSWERS_KEY, JSON.stringify(updatedAnswers));
     } catch (err) {
-      console.warn(err);
+      console.warn("Failed to save answers to localStorage:", err);
     }
 
     if (isCorrect) {
@@ -218,29 +224,41 @@ export default function UniversalExerciseStudio({
         origin: { y: 0.8 }
       });
 
-      // Auto mark as completed
-      setCompletedIds((prev) => {
-        const next = new Set(prev);
-        next.add(currentExercise.id);
-        try {
-          localStorage.setItem(STORAGE_COMPLETED_KEY, JSON.stringify(Array.from(next)));
-        } catch (err) {
-          console.warn(err);
-        }
-        return next;
-      });
+      // Auto mark as completed outside updater
+      const nextCompleted = new Set(completedIds);
+      nextCompleted.add(currentExercise.id);
+      setCompletedIds(nextCompleted);
+      try {
+        localStorage.setItem(STORAGE_COMPLETED_KEY, JSON.stringify(Array.from(nextCompleted)));
+      } catch (err) {
+        console.warn("Failed to save completed exercises to localStorage:", err);
+      }
     }
   };
 
-  const handleCopySolution = () => {
-    navigator.clipboard.writeText(currentExercise.fullSolution);
-    setCopiedSolution(true);
-    setTimeout(() => setCopiedSolution(false), 2000);
+  const handleCopySolution = async () => {
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(currentExercise.fullSolution);
+        setCopiedSolution(true);
+        if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = setTimeout(() => setCopiedSolution(false), 2000);
+      }
+    } catch (err) {
+      console.warn("Failed to copy solution:", err);
+    }
   };
 
   const isCurrentCompleted = completedIds.has(currentExercise.id);
   const isCurrentBookmarked = bookmarkedIds.has(currentExercise.id);
-  const completionPercentage = Math.round((completedIds.size / ALL_VOLUME_6_EXERCISES.length) * 100);
+  const completionPercentage = Math.round((completedIds.size / TOTAL_EXERCISES_COUNT) * 100);
+
+  const statusFilters: { key: FilterStatus; label: string }[] = [
+    { key: "all", label: "全部状态" },
+    { key: "unsolved", label: `待攻克 (${TOTAL_EXERCISES_COUNT - completedIds.size})` },
+    { key: "completed", label: `已通关 (${completedIds.size})` },
+    { key: "bookmarked", label: `已收藏 (${bookmarkedIds.size})` }
+  ];
 
   return (
     <div className="space-y-6">
@@ -250,14 +268,14 @@ export default function UniversalExerciseStudio({
           <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
               <Award className="w-3.5 h-3.5 text-emerald-400" />
-              <span>小蓝本初中卷 6 · 116 道全量赛题通关工作台</span>
+              <span>小蓝本初中卷 6 · 全书 {TOTAL_EXERCISES_COUNT} 道全量赛题通关工作台</span>
             </div>
 
             {/* Progress indicators */}
             <div className="flex items-center gap-3 text-xs font-mono">
               <span className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-950 border border-slate-800 text-slate-300">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                已通关: <strong className="text-emerald-400 font-bold">{completedIds.size}</strong> / 116 ({completionPercentage}%)
+                已通关: <strong className="text-emerald-400 font-bold">{completedIds.size}</strong> / {TOTAL_EXERCISES_COUNT} ({completionPercentage}%)
               </span>
               <span className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-950 border border-slate-800 text-slate-300">
                 <Star className="w-3.5 h-3.5 text-amber-400" />
@@ -271,14 +289,14 @@ export default function UniversalExerciseStudio({
           </h2>
 
           <p className="mt-2 text-xs sm:text-sm text-slate-300 leading-relaxed max-w-4xl">
-            涵盖第 1 章（40 题整除）、第 2 章（40 题同余）、第 3 章（36 题不定方程）全本 116 题。每道题均搭载“小数字实验沙盒 → 破局锦囊 → 断点自测 → 规范全解”四阶阶梯，答题记录实时持久化至本地缓存。
+            涵盖第 1 章（40 题整除）、第 2 章（40 题同余）、第 3 章（36 题不定方程）全本 {TOTAL_EXERCISES_COUNT} 题。每道题均搭载“小数字实验沙盒 → 破局锦囊 → 断点自测 → 规范全解”四阶阶梯，答题记录实时持久化至本地缓存。
           </p>
 
           {/* Global Progress Bar */}
           <div className="mt-4 pt-3 border-t border-slate-800/80">
             <div className="flex justify-between items-center text-[11px] font-mono text-slate-400 mb-1.5">
               <span>全书通关进度</span>
-              <span className="text-blue-400 font-bold">{completedIds.size} / 116 题</span>
+              <span className="text-blue-400 font-bold">{completedIds.size} / {TOTAL_EXERCISES_COUNT} 题</span>
             </div>
             <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
               <div
@@ -300,7 +318,7 @@ export default function UniversalExerciseStudio({
                     : "text-slate-400 hover:text-white"
                 }`}
               >
-                全书 116 题
+                全书 {TOTAL_EXERCISES_COUNT} 题
               </button>
               <button
                 onClick={() => setFilterChapter(1)}
@@ -336,15 +354,10 @@ export default function UniversalExerciseStudio({
 
             {/* Status Filter */}
             <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
-              {[
-                { key: "all", label: "全部状态" },
-                { key: "unsolved", label: `待攻克 (${116 - completedIds.size})` },
-                { key: "completed", label: `已通关 (${completedIds.size})` },
-                { key: "bookmarked", label: `已收藏 (${bookmarkedIds.size})` }
-              ].map((s) => (
+              {statusFilters.map((s) => (
                 <button
                   key={s.key}
-                  onClick={() => setFilterStatus(s.key as any)}
+                  onClick={() => setFilterStatus(s.key)}
                   className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
                     filterStatus === s.key
                       ? "bg-indigo-600 text-white font-bold"
@@ -460,21 +473,17 @@ export default function UniversalExerciseStudio({
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <span className="px-2.5 py-1 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 font-mono text-xs font-bold">
-                  第 {currentExercise.chapter} 章 · 习题 {currentExercise.number}
+                  第 {currentExercise.chapter || 1} 章 · 习题 {currentExercise.number}
                 </span>
                 <span
                   className={`px-2 py-0.5 rounded text-[11px] font-medium border ${
-                    currentExercise.difficulty === "全国压轴"
-                      ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                      : currentExercise.difficulty === "联赛进阶"
-                      ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                      : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                    DIFF_BADGE[currentExercise.difficulty] ?? DIFF_BADGE["基础巩固"]
                   }`}
                 >
                   {currentExercise.difficulty}
                 </span>
                 <span className="text-xs text-slate-400 font-mono">
-                  华东师大版 P51~P54
+                  {getChapterPageRange(currentExercise.chapter)}
                 </span>
               </div>
 
@@ -596,7 +605,7 @@ export default function UniversalExerciseStudio({
             </div>
           )}
 
-          {/* Tab 2: Hints */}
+          {/* Tab 2: Hints (Wrapped in MathView to support LaTeX) */}
           {activeTab === "hint" && (
             <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4">
               <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
@@ -606,7 +615,9 @@ export default function UniversalExerciseStudio({
 
               <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800/80 text-xs text-slate-300 leading-relaxed space-y-1.5">
                 <div className="text-amber-300 font-semibold">破题思维切入点：</div>
-                <div>{currentExercise.heuristicHint}</div>
+                <div>
+                  <MathView math={currentExercise.heuristicHint} />
+                </div>
               </div>
 
               {currentExercise.teacherTrapAlert && (
@@ -615,7 +626,9 @@ export default function UniversalExerciseStudio({
                     <AlertTriangle className="w-3.5 h-3.5" />
                     <span>高频陷阱警示：</span>
                   </div>
-                  <div>{currentExercise.teacherTrapAlert}</div>
+                  <div>
+                    <MathView math={currentExercise.teacherTrapAlert} />
+                  </div>
                 </div>
               )}
             </div>
@@ -689,7 +702,7 @@ export default function UniversalExerciseStudio({
               <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
                 <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>阶段 4：华东师大版标准 LaTeX 规范全解 (P79~P129)</span>
+                  <span>阶段 4：华东师大版标准 LaTeX 规范全解 ({getChapterPageRange(currentExercise.chapter)})</span>
                 </div>
 
                 {/* View Mode & Equation Toggle */}
@@ -786,9 +799,9 @@ export default function UniversalExerciseStudio({
                         }`}
                       >
                         <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800/80">
-                          <span className="font-bold text-emerald-400 text-xs font-mono">
-                            {step.title}
-                          </span>
+                          <div className="font-bold text-emerald-400 text-xs font-mono">
+                            <MathView math={step.title} />
+                          </div>
                           <span className="text-[10px] text-slate-500 font-mono">
                             阶段 {idx + 1}
                           </span>

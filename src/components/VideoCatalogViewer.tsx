@@ -19,7 +19,6 @@ import {
   ExternalLink,
   X,
   Bookmark,
-  Layers,
   GraduationCap
 } from "lucide-react";
 import { VIDEO_CATALOG, VIDEO_STATS, VideoLecture } from "@/data/videoCatalogData";
