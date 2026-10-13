@@ -23,6 +23,7 @@ import {
   GraduationCap
 } from "lucide-react";
 import { VIDEO_CATALOG, VIDEO_STATS, VideoLecture } from "@/data/videoCatalogData";
+import InteractiveTranscriptVault from "@/components/InteractiveTranscriptVault";
 
 export default function VideoCatalogViewer() {
   const [filterCat, setFilterCat] = useState<string>("all");
@@ -426,21 +427,8 @@ export default function VideoCatalogViewer() {
                             </div>
                           </div>
 
-                          {/* Pillar 4: Full Blackboard OCR Transcript */}
-                          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2 text-xs font-bold text-purple-400 uppercase tracking-wider">
-                                <Layers className="w-4 h-4 text-purple-400" />
-                                完整板书演算实录与讲授转录（开场 + 中场推演 OCR）
-                              </div>
-                              <span className="text-[11px] font-mono text-slate-500">
-                                原始板书 OCR 高精对齐
-                              </span>
-                            </div>
-                            <div className="bg-slate-950 border border-slate-800/80 rounded-lg p-3.5 font-mono text-[11px] text-slate-300 leading-relaxed whitespace-pre-wrap max-h-64 overflow-y-auto select-text scrollbar-thin scrollbar-thumb-slate-800">
-                              {v.fullTranscript}
-                            </div>
-                          </div>
+                          {/* Pillar 4: Interactive Timestamp Transcript & Board Vault */}
+                          <InteractiveTranscriptVault video={v} />
                         </td>
                       </tr>
                     )}
@@ -525,34 +513,8 @@ export default function VideoCatalogViewer() {
                 </div>
               </div>
 
-              {/* Full Transcript */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs font-bold text-purple-400">
-                    <Layers className="w-4 h-4 text-purple-400" />
-                    完整板书实录与讲授推导全文 (OCR)
-                  </div>
-                  <button
-                    onClick={(e) => handleCopyTranscript(modalVideo, e)}
-                    className="inline-flex items-center gap-1 px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors"
-                  >
-                    {copiedId === modalVideo.id ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
-                        <span className="text-emerald-400">已复制板书实录</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5 text-slate-400" />
-                        <span>复制板书实录</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-                <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs text-slate-300 leading-relaxed whitespace-pre-wrap select-text max-h-80 overflow-y-auto">
-                  {modalVideo.fullTranscript}
-                </div>
-              </div>
+              {/* Interactive Timestamp Transcript & Board Vault */}
+              <InteractiveTranscriptVault video={modalVideo} />
             </div>
 
             {/* Modal Footer */}

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import confetti from "canvas-confetti";
 import {
   CheckCircle2,
@@ -15,7 +15,17 @@ import {
   Sparkles,
   Layers,
   Award,
-  AlertTriangle
+  AlertTriangle,
+  Star,
+  Bookmark,
+  CheckCheck,
+  Eye,
+  EyeOff,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  ExternalLink,
+  BookOpen
 } from "lucide-react";
 import MathView from "@/components/MathView";
 import { ALL_VOLUME_6_EXERCISES } from "@/data/allExercisesData";
@@ -25,6 +35,40 @@ interface UniversalExerciseStudioProps {
   initialChapter?: number | "all";
 }
 
+const STORAGE_COMPLETED_KEY = "bluebook6_completed_exercises_v1";
+const STORAGE_BOOKMARKS_KEY = "bluebook6_bookmarks_exercises_v1";
+const STORAGE_ANSWERS_KEY = "bluebook6_answers_exercises_v1";
+
+interface SolutionStep {
+  stepNum: number;
+  title: string;
+  content: string;
+}
+
+function splitSolutionIntoSteps(text: string): SolutionStep[] {
+  const normalized = text.replace(/\\n/g, "\n");
+  let parts = normalized.split(/\n\n+/);
+  if (parts.length < 2) {
+    parts = normalized.split(/\n(?=(?:若|又|当|设|先|由|解得|所以|综上|故|即|（[1-9]）|[1-9]\.))/);
+  }
+  if (parts.length < 2) {
+    parts = normalized.split(/\n+/);
+  }
+  const filtered = parts.map((p) => p.trim()).filter(Boolean);
+  if (filtered.length >= 2) {
+    return filtered.map((chunk, i) => {
+      const firstLine = chunk.split("\n")[0].replace(/[*#]/g, "").trim();
+      const title = firstLine.length > 28 ? firstLine.slice(0, 28) + "..." : firstLine;
+      return {
+        stepNum: i + 1,
+        title: `步骤 ${i + 1}：${title}`,
+        content: chunk
+      };
+    });
+  }
+  return [{ stepNum: 1, title: "完整官方规范推导", content: normalized }];
+}
+
 export default function UniversalExerciseStudio({
   initialChapter = "all"
 }: UniversalExerciseStudioProps) {
@@ -32,35 +76,140 @@ export default function UniversalExerciseStudio({
   const [activeTab, setActiveTab] = useState<"sandbox" | "hint" | "checkpoint" | "solution">("sandbox");
   const [filterChapter, setFilterChapter] = useState<number | "all">(initialChapter);
   const [filterDiff, setFilterDiff] = useState<string>("all");
+  const [filterStatus, setFilterStatus] = useState<"all" | "completed" | "unsolved" | "bookmarked">("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  // Quiz user answers state
+  // Persistent user state
+  const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
+  const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
   const [userAnswers, setUserAnswers] = useState<Record<string, number | null>>({});
   const [userFeedback, setUserFeedback] = useState<Record<string, boolean | null>>({});
 
   // Sandbox inputs
   const [sandboxValue, setSandboxValue] = useState<string>("3");
 
-  const filteredExercises = ALL_VOLUME_6_EXERCISES.filter((ex) => {
-    if (filterChapter !== "all" && ex.chapter !== filterChapter) return false;
-    if (filterDiff !== "all" && ex.difficulty !== filterDiff) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const matchNum = ex.number.toString().includes(q);
-      const matchTitle = ex.title.toLowerCase().includes(q);
-      const matchText = ex.problemStatement.toLowerCase().includes(q);
-      if (!matchNum && !matchTitle && !matchText) return false;
-    }
-    return true;
-  });
+  // Solution view options
+  const [solutionMode, setSolutionMode] = useState<"stepped" | "full">("stepped");
+  const [highlightKeyEquations, setHighlightKeyEquations] = useState<boolean>(true);
+  const [revealedStepCount, setRevealedStepCount] = useState<number>(1);
+  const [copiedSolution, setCopiedSolution] = useState<boolean>(false);
 
-  const currentExercise =
-    ALL_VOLUME_6_EXERCISES.find((e) => e.id === selectedExId) || ALL_VOLUME_6_EXERCISES[0];
+  // Load from localStorage on mount
+  useEffect(() => {
+    try {
+      const savedCompleted = localStorage.getItem(STORAGE_COMPLETED_KEY);
+      if (savedCompleted) {
+        setCompletedIds(new Set(JSON.parse(savedCompleted)));
+      }
+
+      const savedBookmarks = localStorage.getItem(STORAGE_BOOKMARKS_KEY);
+      if (savedBookmarks) {
+        setBookmarkedIds(new Set(JSON.parse(savedBookmarks)));
+      }
+
+      const savedAnswers = localStorage.getItem(STORAGE_ANSWERS_KEY);
+      if (savedAnswers) {
+        const parsed = JSON.parse(savedAnswers);
+        setUserAnswers(parsed);
+
+        // Precompute feedback for answered questions
+        const feedback: Record<string, boolean> = {};
+        for (const ex of ALL_VOLUME_6_EXERCISES) {
+          if (parsed[ex.id] !== undefined && parsed[ex.id] !== null) {
+            feedback[ex.id] = parsed[ex.id] === ex.checkpoint.correctIndex;
+          }
+        }
+        setUserFeedback(feedback);
+      }
+    } catch (e) {
+      console.warn("Failed to read progress from localStorage:", e);
+    }
+  }, []);
+
+  // Filter exercises
+  const filteredExercises = useMemo(() => {
+    return ALL_VOLUME_6_EXERCISES.filter((ex) => {
+      if (filterChapter !== "all" && ex.chapter !== filterChapter) return false;
+      if (filterDiff !== "all" && ex.difficulty !== filterDiff) return false;
+      if (filterStatus === "completed" && !completedIds.has(ex.id)) return false;
+      if (filterStatus === "unsolved" && completedIds.has(ex.id)) return false;
+      if (filterStatus === "bookmarked" && !bookmarkedIds.has(ex.id)) return false;
+
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchNum = ex.number.toString().includes(q);
+        const matchTitle = ex.title.toLowerCase().includes(q);
+        const matchText = ex.problemStatement.toLowerCase().includes(q);
+        if (!matchNum && !matchTitle && !matchText) return false;
+      }
+      return true;
+    });
+  }, [filterChapter, filterDiff, filterStatus, searchQuery, completedIds, bookmarkedIds]);
+
+  const currentExercise = useMemo(() => {
+    return (
+      ALL_VOLUME_6_EXERCISES.find((e) => e.id === selectedExId) || ALL_VOLUME_6_EXERCISES[0]
+    );
+  }, [selectedExId]);
+
+  // Solution parsed steps
+  const solutionSteps = useMemo(() => {
+    return splitSolutionIntoSteps(currentExercise.fullSolution);
+  }, [currentExercise.fullSolution]);
+
+  // Reset revealed steps when exercise changes
+  useEffect(() => {
+    setRevealedStepCount(1);
+  }, [selectedExId]);
+
+  // Toggle Completed
+  const toggleCompleted = (id: string) => {
+    setCompletedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      try {
+        localStorage.setItem(STORAGE_COMPLETED_KEY, JSON.stringify(Array.from(next)));
+      } catch (err) {
+        console.warn(err);
+      }
+      return next;
+    });
+  };
+
+  // Toggle Bookmark
+  const toggleBookmark = (id: string) => {
+    setBookmarkedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      try {
+        localStorage.setItem(STORAGE_BOOKMARKS_KEY, JSON.stringify(Array.from(next)));
+      } catch (err) {
+        console.warn(err);
+      }
+      return next;
+    });
+  };
 
   const handleAnswerSubmit = (optionIdx: number) => {
-    setUserAnswers((prev) => ({ ...prev, [currentExercise.id]: optionIdx }));
+    const updatedAnswers = { ...userAnswers, [currentExercise.id]: optionIdx };
+    setUserAnswers(updatedAnswers);
+
     const isCorrect = optionIdx === currentExercise.checkpoint.correctIndex;
     setUserFeedback((prev) => ({ ...prev, [currentExercise.id]: isCorrect }));
+
+    try {
+      localStorage.setItem(STORAGE_ANSWERS_KEY, JSON.stringify(updatedAnswers));
+    } catch (err) {
+      console.warn(err);
+    }
 
     if (isCorrect) {
       confetti({
@@ -68,26 +217,76 @@ export default function UniversalExerciseStudio({
         spread: 60,
         origin: { y: 0.8 }
       });
+
+      // Auto mark as completed
+      setCompletedIds((prev) => {
+        const next = new Set(prev);
+        next.add(currentExercise.id);
+        try {
+          localStorage.setItem(STORAGE_COMPLETED_KEY, JSON.stringify(Array.from(next)));
+        } catch (err) {
+          console.warn(err);
+        }
+        return next;
+      });
     }
   };
 
+  const handleCopySolution = () => {
+    navigator.clipboard.writeText(currentExercise.fullSolution);
+    setCopiedSolution(true);
+    setTimeout(() => setCopiedSolution(false), 2000);
+  };
+
+  const isCurrentCompleted = completedIds.has(currentExercise.id);
+  const isCurrentBookmarked = bookmarkedIds.has(currentExercise.id);
+  const completionPercentage = Math.round((completedIds.size / ALL_VOLUME_6_EXERCISES.length) * 100);
+
   return (
     <div className="space-y-6">
-      {/* Top Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-blue-950/40 border border-slate-800 rounded-3xl p-6 sm:p-8">
-        <div className="max-w-4xl">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mb-3">
-            <Award className="w-3.5 h-3.5 text-emerald-400" />
-            <span>小蓝本初中卷 6 · 116 道全量赛题通关工作台</span>
+      {/* Top Banner with Progress Dashboard */}
+      <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-blue-950/40 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-xl">
+        <div className="max-w-5xl">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <Award className="w-3.5 h-3.5 text-emerald-400" />
+              <span>小蓝本初中卷 6 · 116 道全量赛题通关工作台</span>
+            </div>
+
+            {/* Progress indicators */}
+            <div className="flex items-center gap-3 text-xs font-mono">
+              <span className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-950 border border-slate-800 text-slate-300">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                已通关: <strong className="text-emerald-400 font-bold">{completedIds.size}</strong> / 116 ({completionPercentage}%)
+              </span>
+              <span className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-950 border border-slate-800 text-slate-300">
+                <Star className="w-3.5 h-3.5 text-amber-400" />
+                已收藏: <strong className="text-amber-400 font-bold">{bookmarkedIds.size}</strong> 题
+              </span>
+            </div>
           </div>
 
           <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
             四阶渐进解题脚手架：拒绝死记硬背答案，构建独立破题思维
           </h2>
 
-          <p className="mt-2 text-xs sm:text-sm text-slate-300 leading-relaxed">
-            涵盖第 1 章（40 题整除）、第 2 章（40 题同余）、第 3 章（36 题不定方程）全本 116 题。每道题均搭载“小数字实验沙盒 → 破局锦囊 → 断点自测 → 规范全解”四阶阶梯。
+          <p className="mt-2 text-xs sm:text-sm text-slate-300 leading-relaxed max-w-4xl">
+            涵盖第 1 章（40 题整除）、第 2 章（40 题同余）、第 3 章（36 题不定方程）全本 116 题。每道题均搭载“小数字实验沙盒 → 破局锦囊 → 断点自测 → 规范全解”四阶阶梯，答题记录实时持久化至本地缓存。
           </p>
+
+          {/* Global Progress Bar */}
+          <div className="mt-4 pt-3 border-t border-slate-800/80">
+            <div className="flex justify-between items-center text-[11px] font-mono text-slate-400 mb-1.5">
+              <span>全书通关进度</span>
+              <span className="text-blue-400 font-bold">{completedIds.size} / 116 题</span>
+            </div>
+            <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+              <div
+                className="h-full bg-gradient-to-r from-blue-600 via-indigo-500 to-emerald-400 rounded-full transition-all duration-500"
+                style={{ width: `${Math.max(2, completionPercentage)}%` }}
+              />
+            </div>
+          </div>
 
           {/* Quick Filters */}
           <div className="flex flex-wrap items-center gap-3 mt-5">
@@ -135,6 +334,28 @@ export default function UniversalExerciseStudio({
               </button>
             </div>
 
+            {/* Status Filter */}
+            <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+              {[
+                { key: "all", label: "全部状态" },
+                { key: "unsolved", label: `待攻克 (${116 - completedIds.size})` },
+                { key: "completed", label: `已通关 (${completedIds.size})` },
+                { key: "bookmarked", label: `已收藏 (${bookmarkedIds.size})` }
+              ].map((s) => (
+                <button
+                  key={s.key}
+                  onClick={() => setFilterStatus(s.key as any)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                    filterStatus === s.key
+                      ? "bg-indigo-600 text-white font-bold"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+
             {/* Difficulty Pills */}
             <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800">
               {[
@@ -176,82 +397,118 @@ export default function UniversalExerciseStudio({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Problem Grid / List */}
         <div className="lg:col-span-4 space-y-3">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg">
             <div className="flex items-center justify-between text-xs font-semibold text-slate-400 pb-2 border-b border-slate-800 mb-3">
               <span>习题题库 ({filteredExercises.length} 题)</span>
               <span className="font-mono text-blue-400 text-[11px]">点击题目切换</span>
             </div>
 
-            <div className="grid grid-cols-5 sm:grid-cols-8 lg:grid-cols-5 gap-2 max-h-[720px] overflow-y-auto pr-1">
-              {filteredExercises.map((ex) => {
-                const isSelected = ex.id === currentExercise.id;
-                const isPassed = userFeedback[ex.id] === true;
+            {filteredExercises.length === 0 ? (
+              <div className="text-center py-10 text-xs text-slate-500">
+                无匹配题目，请尝试调整筛选条件
+              </div>
+            ) : (
+              <div className="grid grid-cols-5 sm:grid-cols-8 lg:grid-cols-5 gap-2 max-h-[720px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-800">
+                {filteredExercises.map((ex) => {
+                  const isSelected = ex.id === currentExercise.id;
+                  const isPassed = completedIds.has(ex.id);
+                  const isStarred = bookmarkedIds.has(ex.id);
 
-                return (
-                  <button
-                    key={ex.id}
-                    onClick={() => {
-                      setSelectedExId(ex.id);
-                      setActiveTab("sandbox");
-                    }}
-                    className={`h-11 rounded-xl text-xs font-mono font-bold flex flex-col items-center justify-center transition-all border relative ${
-                      isSelected
-                        ? "bg-blue-600 text-white border-blue-400 shadow-md shadow-blue-600/30 ring-2 ring-blue-400/20"
-                        : isPassed
-                        ? "bg-emerald-950/40 text-emerald-400 border-emerald-800/80 hover:bg-emerald-900/40"
-                        : "bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700"
-                    }`}
-                  >
-                    <span className="text-[10px] opacity-70">
-                      {ex.chapter ? `C${ex.chapter}-` : ""}
-                    </span>
-                    <span>{ex.number}</span>
-                    {isPassed && (
-                      <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full border border-slate-900" />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+                  return (
+                    <button
+                      key={ex.id}
+                      onClick={() => {
+                        setSelectedExId(ex.id);
+                        setActiveTab("sandbox");
+                      }}
+                      className={`h-11 rounded-xl text-xs font-mono font-bold flex flex-col items-center justify-center transition-all border relative ${
+                        isSelected
+                          ? "bg-blue-600 text-white border-blue-400 shadow-md shadow-blue-600/30 ring-2 ring-blue-400/20"
+                          : isPassed
+                          ? "bg-emerald-950/40 text-emerald-400 border-emerald-800/80 hover:bg-emerald-900/40"
+                          : "bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700"
+                      }`}
+                    >
+                      <span className="text-[10px] opacity-70">
+                        {ex.chapter ? `C${ex.chapter}-` : ""}
+                      </span>
+                      <span>{ex.number}</span>
+
+                      {/* Completed badge */}
+                      {isPassed && (
+                        <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full border border-slate-900" />
+                      )}
+
+                      {/* Bookmark badge */}
+                      {isStarred && (
+                        <span className="absolute -top-1 -left-1 text-[10px] text-amber-400">
+                          ★
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Right 4-Stage Workbench */}
+        {/* Right Active Exercise Scaffold */}
         <div className="lg:col-span-8 space-y-4">
           {/* Problem Statement Card */}
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-7 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4 shadow-xl">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <span className="px-2.5 py-1 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 text-xs font-mono font-bold">
-                  第 {currentExercise.chapter || 1} 章 · 题 {currentExercise.number}
-                </span>
-                <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">
-                  {currentExercise.sectionCode} 讲
+                <span className="px-2.5 py-1 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 font-mono text-xs font-bold">
+                  第 {currentExercise.chapter} 章 · 习题 {currentExercise.number}
                 </span>
                 <span
-                  className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold ${
-                    currentExercise.difficulty === "基础巩固"
-                      ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                  className={`px-2 py-0.5 rounded text-[11px] font-medium border ${
+                    currentExercise.difficulty === "全国压轴"
+                      ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
                       : currentExercise.difficulty === "联赛进阶"
-                      ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                      : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                      ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                      : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                   }`}
                 >
                   {currentExercise.difficulty}
                 </span>
+                <span className="text-xs text-slate-400 font-mono">
+                  华东师大版 P51~P54
+                </span>
               </div>
 
-              {currentExercise.videoMeta && (
-                <div className="flex items-center gap-1 text-xs text-rose-400 bg-rose-950/40 border border-rose-900/50 px-2.5 py-1 rounded-lg font-mono">
-                  <Video className="w-3.5 h-3.5" />
-                  <span>对应视频微课 #{currentExercise.videoMeta.lectureId} ({currentExercise.videoMeta.durationFormatted})</span>
-                </div>
-              )}
+              {/* Action Buttons: Bookmark & Mark Complete */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => toggleBookmark(currentExercise.id)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 ${
+                    isCurrentBookmarked
+                      ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
+                      : "bg-slate-950 border-slate-800 text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <Star className={`w-3.5 h-3.5 ${isCurrentBookmarked ? "fill-amber-400 text-amber-400" : ""}`} />
+                  <span>{isCurrentBookmarked ? "已收藏" : "收藏此题"}</span>
+                </button>
+
+                <button
+                  onClick={() => toggleCompleted(currentExercise.id)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 ${
+                    isCurrentCompleted
+                      ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
+                      : "bg-slate-950 border-slate-800 text-slate-400 hover:text-white"
+                  }`}
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>{isCurrentCompleted ? "已通关" : "标记通关"}</span>
+                </button>
+              </div>
             </div>
 
             <h3 className="text-lg font-black text-white">{currentExercise.title}</h3>
 
-            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800/80 text-sm text-slate-200 leading-relaxed">
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800/80 text-sm text-slate-200 leading-relaxed select-text">
               <MathView math={currentExercise.problemStatement} />
             </div>
 
@@ -348,24 +605,17 @@ export default function UniversalExerciseStudio({
               </div>
 
               <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800/80 text-xs text-slate-300 leading-relaxed space-y-1.5">
-                <div className="font-bold text-amber-400 font-mono text-[11px] flex items-center gap-1.5">
-                  <Lightbulb className="w-3.5 h-3.5 text-amber-400" />
-                  破局启发指引：
-                </div>
-                <div className="font-mono text-slate-200">
-                  <MathView math={currentExercise.heuristicHint} />
-                </div>
+                <div className="text-amber-300 font-semibold">破题思维切入点：</div>
+                <div>{currentExercise.heuristicHint}</div>
               </div>
 
               {currentExercise.teacherTrapAlert && (
-                <div className="p-4 rounded-2xl bg-rose-950/20 border border-rose-900/40 text-xs text-rose-300 leading-relaxed space-y-1.5">
-                  <div className="font-bold text-rose-400 font-mono text-[11px] flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
-                    奥数常见思维陷阱警示：
+                <div className="p-4 rounded-2xl bg-rose-950/30 border border-rose-900/60 text-xs text-rose-300 leading-relaxed space-y-1.5">
+                  <div className="text-rose-400 font-semibold flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    <span>高频陷阱警示：</span>
                   </div>
-                  <div>
-                    <MathView math={currentExercise.teacherTrapAlert} />
-                  </div>
+                  <div>{currentExercise.teacherTrapAlert}</div>
                 </div>
               )}
             </div>
@@ -376,7 +626,7 @@ export default function UniversalExerciseStudio({
             <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4">
               <div className="flex items-center gap-2 text-blue-400 font-bold text-sm">
                 <HelpCircle className="w-4 h-4" />
-                <span>阶段 3：破局关键断点自测</span>
+                <span>阶段 3：破局断点自测 (验证关键推理)</span>
               </div>
 
               <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800/80 text-xs text-slate-200">
@@ -425,7 +675,7 @@ export default function UniversalExerciseStudio({
                   }`}
                 >
                   <div className="font-bold mb-1">
-                    {userFeedback[currentExercise.id] ? "🎉 回答正确！破局点已锁定！" : "⚠️ 回答有误，请细读解析："}
+                    {userFeedback[currentExercise.id] ? "🎉 回答正确！破局点已锁定！已自动记录通关！" : "⚠️ 回答有误，请细读解析："}
                   </div>
                   <div>{currentExercise.checkpoint.explanation}</div>
                 </div>
@@ -433,17 +683,131 @@ export default function UniversalExerciseStudio({
             </div>
           )}
 
-          {/* Tab 4: Solution */}
+          {/* Tab 4: Upgraded Solution with Step-by-Step Progressive Lens */}
           {activeTab === "solution" && (
             <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-4">
-              <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
-                <CheckCircle2 className="w-4 h-4" />
-                <span>阶段 4：华东师大版标准 LaTeX 规范全解</span>
+              <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <span>阶段 4：华东师大版标准 LaTeX 规范全解 (P79~P129)</span>
+                </div>
+
+                {/* View Mode & Equation Toggle */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setHighlightKeyEquations(!highlightKeyEquations)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1 ${
+                      highlightKeyEquations
+                        ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
+                        : "bg-slate-950 text-slate-400 border-slate-800 hover:text-white"
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>高亮关键公式</span>
+                  </button>
+
+                  <div className="flex items-center bg-slate-950 border border-slate-800 rounded-lg p-0.5 text-xs font-medium">
+                    <button
+                      onClick={() => setSolutionMode("stepped")}
+                      className={`px-2.5 py-1 rounded-md transition-all ${
+                        solutionMode === "stepped"
+                          ? "bg-emerald-600 text-white font-bold"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      分步透镜 ({solutionSteps.length}步)
+                    </button>
+                    <button
+                      onClick={() => setSolutionMode("full")}
+                      className={`px-2.5 py-1 rounded-md transition-all ${
+                        solutionMode === "full"
+                          ? "bg-emerald-600 text-white font-bold"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      完整全景
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={handleCopySolution}
+                    className="p-1.5 rounded-lg bg-slate-950 border border-slate-800 text-slate-400 hover:text-white transition-colors"
+                    title="复制完整题解"
+                  >
+                    {copiedSolution ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
               </div>
 
-              <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 text-xs text-slate-300 leading-relaxed font-mono whitespace-pre-line">
-                <MathView math={currentExercise.fullSolution} />
-              </div>
+              {/* Mode A: Stepped Progressive View */}
+              {solutionMode === "stepped" && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+                    <span>
+                      渐进推导透镜：已揭晓 <strong>{Math.min(revealedStepCount, solutionSteps.length)}</strong> / {solutionSteps.length} 个核心推演阶段
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {revealedStepCount < solutionSteps.length ? (
+                        <button
+                          onClick={() => setRevealedStepCount((prev) => Math.min(prev + 1, solutionSteps.length))}
+                          className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors flex items-center gap-1"
+                        >
+                          <span>揭晓下一步骤</span>
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </button>
+                      ) : (
+                        <span className="text-emerald-400 font-medium">已全部揭晓全部推导！</span>
+                      )}
+                      <button
+                        onClick={() =>
+                          setRevealedStepCount(
+                            revealedStepCount >= solutionSteps.length ? 1 : solutionSteps.length
+                          )
+                        }
+                        className="text-slate-400 hover:text-slate-200 underline text-[11px]"
+                      >
+                        {revealedStepCount >= solutionSteps.length ? "重置为第1步" : "展开全部"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    {solutionSteps.slice(0, revealedStepCount).map((step, idx) => (
+                      <div
+                        key={step.stepNum}
+                        className={`p-4 rounded-2xl border transition-all animate-in fade-in slide-in-from-top-1 ${
+                          highlightKeyEquations && idx === revealedStepCount - 1
+                            ? "bg-slate-950 border-emerald-500/40 shadow-lg shadow-emerald-950/20"
+                            : "bg-slate-950 border-slate-800"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800/80">
+                          <span className="font-bold text-emerald-400 text-xs font-mono">
+                            {step.title}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            阶段 {idx + 1}
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-200 leading-relaxed font-mono select-text">
+                          <MathView math={step.content} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Mode B: Full Continuous LaTeX View */}
+              {solutionMode === "full" && (
+                <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 text-xs text-slate-300 leading-relaxed font-mono whitespace-pre-line select-text">
+                  <MathView math={currentExercise.fullSolution} />
+                </div>
+              )}
             </div>
           )}
         </div>
