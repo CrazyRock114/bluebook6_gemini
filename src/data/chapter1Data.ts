@@ -43,10 +43,11 @@ export interface TheorySection {
 export interface ExerciseItem {
   id: string;
   number: number;
+  chapter?: number;
   title: string;
   problemStatement: string;
   difficulty: '基础巩固' | '联赛进阶' | '全国压轴';
-  sectionCode: '1.1' | '1.2' | '1.3' | '1.4';
+  sectionCode: string;
   topicTags: string[];
   videoMeta: {
     lectureId: number;
