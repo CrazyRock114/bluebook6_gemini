@@ -17,8 +17,15 @@
 /.next/
 /out/
 
+# Large video assets and scratch
+6奥林匹克小丛书*
+*.mp4
+scratch/
+.DS_Store
+
 # production
 /build
+
 
 # misc
 .DS_Store

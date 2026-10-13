@@ -1,4 +1,9 @@
 @import "tailwindcss";
+@import "katex/dist/katex.min.css";
+
+html {
+  scroll-behavior: smooth;
+}
 
 :root {
   --background: #ffffff;
