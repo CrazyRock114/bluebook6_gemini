@@ -8,7 +8,10 @@ export function generateStaticParams() {
   return [
     { chapter: "ch1" },
     { chapter: "ch2" },
-    { chapter: "ch3" }
+    { chapter: "ch3" },
+    { chapter: "1" },
+    { chapter: "2" },
+    { chapter: "3" }
   ];
 }
 
@@ -18,7 +21,8 @@ export default async function ChapterExercisesPage({
   params: Promise<{ chapter: string }>;
 }) {
   const { chapter } = await params;
-  const chapterNumber = chapter === "ch2" ? 2 : chapter === "ch3" ? 3 : 1;
+  const clean = chapter.toLowerCase().replace(/^(ch|chapter)/, "");
+  const chapterNumber = clean === "2" ? 2 : clean === "3" ? 3 : 1;
   const chapterTitle =
     chapterNumber === 1
       ? "第 1 章：整除理论习题 (40题)"
