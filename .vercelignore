@@ -1,0 +1,9 @@
+# Ignore large videos and media
+6奥林匹克小丛书*
+*.mp4
+*.pdf
+scratch/
+.system_generated/
+node_modules
+.next
+.git
