@@ -26,6 +26,8 @@ import {
   Cpu
 } from "lucide-react";
 
+import Link from "next/link";
+
 interface Volume6TheoryReaderProps {
   initialChapter?: number;
   onNavigateToExercises?: (chapter: number) => void;
@@ -56,13 +58,14 @@ export default function Volume6TheoryReader({
 
   return (
     <div className="space-y-6">
-      {/* Chapter Selection Bar */}
+      {/* Chapter Selection Bar with real URLs */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {VOLUME_6_CHAPTERS.map((chap) => {
           const isSelected = chap.number === selectedChapter;
           return (
-            <button
+            <Link
               key={chap.number}
+              href={`/theory/ch${chap.number}`}
               onClick={() => handleSelectChapter(chap.number)}
               className={`p-4 rounded-2xl border text-left transition-all relative overflow-hidden flex flex-col justify-between ${
                 isSelected
@@ -91,7 +94,7 @@ export default function Volume6TheoryReader({
                   <ArrowRight className="w-3.5 h-3.5" />
                 </div>
               )}
-            </button>
+            </Link>
           );
         })}
       </div>
@@ -131,10 +134,10 @@ export default function Volume6TheoryReader({
               })}
             </div>
 
-            {/* Quick Jumps */}
+            {/* Quick Jumps with real URL Links */}
             <div className="pt-3 border-t border-slate-800 space-y-2">
-              <button
-                onClick={() => onNavigateToExercises?.(selectedChapter)}
+              <Link
+                href={`/exercises/ch${selectedChapter}`}
                 className="w-full py-2 px-3 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-slate-200 text-xs font-semibold flex items-center justify-between transition-colors"
               >
                 <span className="flex items-center gap-1.5">
@@ -144,10 +147,10 @@ export default function Volume6TheoryReader({
                 <span className="text-[10px] text-slate-400 font-mono">
                   {selectedChapter === 3 ? "36 题" : "40 题"}
                 </span>
-              </button>
+              </Link>
 
-              <button
-                onClick={() => onNavigateToVideos?.(selectedChapter)}
+              <Link
+                href="/videos"
                 className="w-full py-2 px-3 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-slate-200 text-xs font-semibold flex items-center justify-between transition-colors"
               >
                 <span className="flex items-center gap-1.5">
@@ -157,7 +160,7 @@ export default function Volume6TheoryReader({
                 <span className="text-[10px] text-slate-400 font-mono">
                   {chapterData.chapterNumber === 1 ? "37 讲" : chapterData.chapterNumber === 2 ? "49 讲" : "70 讲"}
                 </span>
-              </button>
+              </Link>
             </div>
           </div>
 

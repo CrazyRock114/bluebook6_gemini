@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
 import { ALL_VOLUMES, VolumeInfo, SERIES_CATEGORIES } from "@/data/allVolumesData";
 import {
   BookOpen,
@@ -16,7 +17,7 @@ import {
 } from "lucide-react";
 
 interface SeriesHubViewProps {
-  onEnterVolume6: () => void;
+  onEnterVolume6?: () => void;
 }
 
 export default function SeriesHubView({ onEnterVolume6 }: SeriesHubViewProps) {
@@ -186,13 +187,13 @@ export default function SeriesHubView({ onEnterVolume6 }: SeriesHubViewProps) {
               {/* Card Footer Button */}
               <div className="p-4 bg-slate-950/80 border-t border-slate-800/80 mt-auto">
                 {isFlagship ? (
-                  <button
-                    onClick={onEnterVolume6}
+                  <Link
+                    href="/theory/ch1"
                     className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-md shadow-blue-600/25"
                   >
                     <span>进入研学舱 (已深度落地)</span>
                     <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
+                  </Link>
                 ) : (
                   <div className="flex items-center justify-between text-xs text-slate-400">
                     <span className="text-[11px] font-mono">架构接口已统一</span>
